@@ -24,7 +24,8 @@ public class PluginSettings implements PluginPreference {
         builder.addText("· [危险] 权限在 Android 6.0+ 除清单声明外还需运行时动态申请");
 
         builder.addHeader("关于");
-        builder.addText("Manifest 可视化编辑器 v1.0").summary("基于 MT 插件 V3 API 开发");
-        builder.addText("注意事项").summary("写回时 XML 会被重新格式化（缩进规范化），原注释会保留。二进制 AXML 需先反编译为文本再编辑。");
+        builder.addText("Manifest 可视化编辑器 " + context.getPluginVersionName())
+                .summary("基于 MT 插件 V3 API 开发");
+        builder.addText("注意事项").summary("写回时 XML 会重新格式化：保留注释，并自动沿用原文件的缩进风格。二进制 AXML 需先反编译为文本再编辑。");
     }
 }

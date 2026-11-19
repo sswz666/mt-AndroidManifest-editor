@@ -285,14 +285,15 @@ public class ManifestSession {
     }
 
     public void setSdkAttr(String attr, String value) {
-        Element usesSdk = getOrCreateUsesSdk();
         if (value.isEmpty()) {
-            if (usesSdk.hasAttribute("android:" + attr)) {
+            // 值为空：仅在 uses-sdk 已存在时移除该属性，避免生成空的 <uses-sdk />
+            Element usesSdk = firstChild(doc.getDocumentElement(), "uses-sdk");
+            if (usesSdk != null && usesSdk.hasAttribute("android:" + attr)) {
                 usesSdk.removeAttribute("android:" + attr);
                 modified = true;
             }
         } else {
-            usesSdk.setAttribute("android:" + attr, value);
+            getOrCreateUsesSdk().setAttribute("android:" + attr, value);
             modified = true;
         }
     }

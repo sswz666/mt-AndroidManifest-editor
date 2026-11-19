@@ -54,7 +54,7 @@ public final class PermissionCatalog {
         add("READ_MEDIA_IMAGES", "读取相册图片", LEVEL_DANGEROUS);
         add("READ_MEDIA_VIDEO", "读取相册视频", LEVEL_DANGEROUS);
         add("READ_MEDIA_AUDIO", "读取音乐音频", LEVEL_DANGEROUS);
-        add("MANAGE_MEDIA", "修改媒体文件（无需逐次确认）", LEVEL_SPECIAL);
+        add("MANAGE_MEDIA", "修改媒体文件（无需逐次确认）", LEVEL_SIGNATURE);
 
         // ===== 位置 =====
         add("ACCESS_FINE_LOCATION", "精确定位（GPS）", LEVEL_DANGEROUS);
@@ -133,7 +133,7 @@ public final class PermissionCatalog {
         add("SET_TIME_ZONE", "设置系统时区", LEVEL_SIGNATURE);
         add("MOUNT_UNMOUNT_FILESYSTEMS", "挂载/卸载文件系统", LEVEL_SIGNATURE);
         add("MOUNT_FORMAT_FILESYSTEMS", "格式化文件系统", LEVEL_SIGNATURE);
-        add("PACKAGE_USAGE_STATS", "读取应用使用统计", LEVEL_SIGNATURE);
+        add("PACKAGE_USAGE_STATS", "读取应用使用统计（需用户在设置中授予使用情况访问）", LEVEL_SPECIAL);
         add("ACCESS_MOCK_LOCATION", "模拟位置来源（测试用）", LEVEL_SIGNATURE);
         add("UPDATE_DEVICE_STATS", "更新设备电量统计", LEVEL_SIGNATURE);
     }

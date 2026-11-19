@@ -50,8 +50,15 @@ public class ManifestToolMenu extends BaseTextEditorToolMenu {
             session.indentUnit = ManifestSession.detectIndent(text);
             new ManifestUI(session).open();
         } catch (Exception e) {
-            pluginUI.showErrorMessage(e);
-            pluginUI.showToastL("解析失败：请确认当前文件是文本格式的 AndroidManifest.xml（二进制 AXML 请先反编译）");
+            // 只弹一个对话框，避免错误提示与 toast 同时出现互相遮挡
+            String detail = e.getMessage() == null ? e.toString() : e.getMessage();
+            pluginUI.buildDialog()
+                    .setTitle("无法读取当前清单")
+                    .setMessage("解析失败：" + detail
+                            + "\n\n若当前文件是二进制 AXML（APK 内未反编译的清单），"
+                            + "请先用 MT 的「反编译」功能转成文本格式再使用本插件。")
+                    .setPositiveButton("{ok}", null)
+                    .show();
         }
     }
 }

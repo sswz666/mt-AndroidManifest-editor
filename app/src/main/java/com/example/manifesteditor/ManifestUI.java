@@ -61,7 +61,7 @@ public class ManifestUI {
                         + " (" + (versionCode.isEmpty() ? "-" : versionCode) + ")").textSize(13)
                 .addTextView().text("SDK：     minSdk " + (minSdk.isEmpty() ? "-" : minSdk)
                         + " / targetSdk " + (targetSdk.isEmpty() ? "-" : targetSdk)).textSize(13)
-                .addTextView().text("权限：    共 " + perms.size() + " 项 uses-permission 声明").textSize(13)
+                .addTextView().text("权限：    共 " + perms.size() + " 项权限声明").textSize(13)
                 .addTextView().text("组件：    Activity " + activities + " · Service " + services
                         + " · Receiver " + receivers + " · Provider " + providers).textSize(13)
                 .addView().height(1).widthMatchParent().marginTopDp(8).backgroundColor(ui.colorDivider())
@@ -100,7 +100,7 @@ public class ManifestUI {
                 return;
             }
             session.writeBack();
-            ui.showToastL("已写回编辑器，可点击顶部保存按钮持久化（格式会被规范化）");
+            ui.showToastL("已写回编辑器，点击顶部保存按钮即可保存文件");
             if (mainDialog != null) mainDialog.dismiss();
         } catch (Exception e) {
             ui.showErrorMessage(e);
@@ -199,9 +199,7 @@ public class ManifestUI {
     private void showPermissionDetail(ManifestSession.PermissionEntry entry) {
         PermissionCatalog.Info info = PermissionCatalog.get(entry.name);
         String name = entry.name;
-        // android.permission.XXX -> 去掉前缀得到短名
-        String shortName = name.substring(name.lastIndexOf('.') + 1);
-        String docUrl = "https://developer.android.com/reference/android/Manifest.permission." + shortName;
+        String docUrl = officialDocUrl(name);
         String msg;
         if (info != null) {
             msg = "权限名称：" + info.chinese + "\n\n"
@@ -219,21 +217,44 @@ public class ManifestUI {
         if ("uses-permission-sdk-23".equals(entry.tag)) {
             msg += "\n\n该元素为 uses-permission-sdk-23，仅 Android 6.0 (API 23) 及以上生效。";
         }
-        msg += "\n\n在线文档：" + docUrl;
+        msg += docUrl != null
+                ? "\n\n在线文档：" + docUrl
+                : "\n\n该权限没有官方文档页，可点下方按钮搜索其用途。";
+
+        final String url = docUrl != null ? docUrl : searchUrl(name);
         ui.buildDialog()
                 .setTitle("权限详情")
                 .setMessage(msg)
                 .setPositiveButton("{close}", null)
-                .setNeutralButton("打开文档", (dialog, which) ->
-                        session.ui.getContext().openBrowser(docUrl))
+                .setNeutralButton(docUrl != null ? "打开文档" : "搜索用途", (dialog, which) ->
+                        session.ui.getContext().openBrowser(url))
                 .show();
+    }
+
+    /**
+     * 官方文档地址。Android 开发者文档把全部权限放在同一个页面，
+     * 每个权限用锚点定位（…/Manifest.permission#CAMERA），
+     * 不能写成 Manifest.permission.CAMERA（会 404）。
+     * 使用国内可直连的 google.cn 镜像。
+     */
+    private static String officialDocUrl(String permissionName) {
+        if (permissionName.startsWith("android.permission.")) {
+            String shortName = permissionName.substring("android.permission.".length());
+            return "https://developer.android.google.cn/reference/android/Manifest.permission?hl=zh-cn#" + shortName;
+        }
+        return null;
+    }
+
+    /** 非系统权限没有官方文档，退化为搜索引擎检索 */
+    private static String searchUrl(String permissionName) {
+        return "https://cn.bing.com/search?q=" + android.net.Uri.encode(permissionName + " Android permission");
     }
 
     // ==================== 添加权限 ====================
 
     private void showAddPermissionDialog() {
         PluginView view = ui.buildVerticalLayout()
-                .addTextView().text("当前共 " + session.listPermissions().size() + " 项权限").textSize(13)
+                .addTextView("count").text("当前共 " + session.listPermissions().size() + " 项权限").textSize(13)
                 .addEditText("input").hint("输入权限全名，如 android.permission.CAMERA")
                         .minLines(1).maxLines(1).marginTopDp(8)
                 .addHorizontalLayout().marginTopDp(8).gravity(Gravity.CENTER_VERTICAL).children(row -> row
@@ -245,7 +266,8 @@ public class ManifestUI {
 
         view.requireViewById("fromCatalog").setOnClickListener(v -> showCategoryPickDialog());
         view.requireViewById("add").setOnClickListener(v -> {
-            PluginEditText input = v.getRootView().requireViewById("input");
+            PluginView root = v.getRootView();
+            PluginEditText input = root.requireViewById("input");
             String name = input.getText().toString().trim();
             if (name.isEmpty()) {
                 ui.showToast("请输入权限名");
@@ -259,7 +281,11 @@ public class ManifestUI {
                 return;
             }
             session.addPermission(name);
-            ui.showToastL("已添加权限，点击主面板「写回编辑器」生效");
+            // 刷新计数并清空输入，方便连续添加
+            root.<bin.mt.plugin.api.ui.PluginTextView>requireViewById("count")
+                    .setText("当前共 " + session.listPermissions().size() + " 项权限");
+            input.setText("");
+            ui.showToastL("已添加 " + PermissionCatalog.displayName(name) + "，点击主面板「写回编辑器」生效");
         });
 
         ui.buildDialog()
@@ -288,7 +314,7 @@ public class ManifestUI {
             checked[i] = session.hasPermission(name);
             PermissionCatalog.Info info = PermissionCatalog.get(name);
             String tag = info != null ? PermissionCatalog.levelTag(info.level) : "[未知]";
-            items[i] = tag + " " + PermissionCatalog.displayName(name) + "\n" + name;
+            items[i] = tag + " " + PermissionCatalog.displayName(name);
         }
 
         ui.buildDialog()
@@ -376,14 +402,14 @@ public class ManifestUI {
         String value = session.getAppAttr(attr);
         boolean checked = value.isEmpty() ? defaultValue : "true".equals(value);
         if (checked) swb.check();
-        // 说明：对话框首次显示时系统会为已勾选的开关补发一次回调，
-        // 因此用 uiReady 过滤初始回调，且不再弹 toast（切换状态本身已可见），
-        // 避免一次弹出多个 toast 相互覆盖。
-        final boolean[] uiReady = {false};
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> uiReady[0] = true, 600);
+        // 对话框显示时系统可能为已勾选的开关补发一次同样值的回调，
+        // 用「与当前值比较」过滤这类重复事件，既不弹多余 toast，也不会漏掉用户真实操作。
+        final String[] lastValue = {checked ? "true" : "false"};
         swb.onCheckedChange((buttonView, isChecked) -> {
-            if (!uiReady[0]) return;
-            session.setAppAttr(attr, isChecked ? "true" : "false");
+            String now = isChecked ? "true" : "false";
+            if (now.equals(lastValue[0])) return;
+            lastValue[0] = now;
+            session.setAppAttr(attr, now);
         });
     }
 
@@ -464,7 +490,7 @@ public class ManifestUI {
             }
             String name = c.name.isEmpty() ? "(未命名)" : c.name;
             String launcher = isLauncherActivity(c.element) ? " [桌面入口]" : "";
-            String exported = c.hasExported ? (c.exported ? " · exported" : " · 非导出") : "";
+            String exported = c.hasExported ? (c.exported ? " · 已导出" : " · 非导出") : "";
             items[i] = tagLabel + launcher + exported + "\n" + name;
         }
 

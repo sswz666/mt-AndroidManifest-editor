@@ -64,3 +64,13 @@ app/src/main/java/com/example/manifesteditor/
 - **修复写回后格式被压缩**：弃用 Android 系统 Transformer（它会丢掉缩进、把声明和根标签挤在一行），改为自绘格式化序列化器，并自动检测原文件缩进风格（2 空格 / 4 空格 / Tab）；
 - **权限列表改为单行紧凑显示**（`[级别] 中文名 (SHORT)`），完整权限名在详情页查看；
 - **修复「应用属性」弹多个 toast**：开关按钮在对话框首次显示时会被系统补发回调，已过滤初始回调并移除开关的即时 toast。
+
+### v1.2
+- **修复权限详情「打开文档」跳转 404**：Android 官方文档把全部权限放在同一页、用锚点定位，正确地址是 `reference/android/Manifest.permission?hl=zh-cn#CAMERA`（原实现拼成 `Manifest.permission.CAMERA`，必然 404）；同时改用国内可直连的 `developer.android.google.cn` 镜像并带中文语言参数；
+- 非 `android.permission.*` 的权限（第三方库/自定义）不再拼官方链接，详情页改为「搜索用途」（Bing 检索）；
+- 修复「添加权限」成功后计数不刷新、输入框不清空的问题，现在可连续添加；
+- 修复打开文件失败时错误对话框与 toast 同时弹出的问题，改为单个说明对话框（含二进制 AXML 提示）；
+- 修复「应用属性」开关过滤逻辑：原 600ms 时间窗口会误吞刚打开对话框时的真实点击，改为与当前值比较；
+- 版本与 SDK 页清空 minSdk/targetSdk 时不再生成空的 `<uses-sdk />`；
+- 修正两处权限等级标注（MANAGE_MEDIA 为 signature|appop、PACKAGE_USAGE_STATS 为 appop 特殊权限）；
+- 组件列表「exported」改为中文；设置页版本号改为动态读取，不再写死。
