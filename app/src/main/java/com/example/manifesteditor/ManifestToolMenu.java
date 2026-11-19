@@ -46,8 +46,8 @@ public class ManifestToolMenu extends BaseTextEditorToolMenu {
     public void onMenuClick(@NonNull PluginUI pluginUI, @NonNull TextEditor editor) {
         try {
             String text = editor.subText(0, editor.length());
-            ManifestSession session = new ManifestSession(pluginUI, editor, ManifestSession.parse(text));
-            session.indentUnit = ManifestSession.detectIndent(text);
+            ManifestSession session = new ManifestSession(pluginUI, editor,
+                    ManifestSession.parse(text), text);
             new ManifestUI(session).open();
         } catch (Exception e) {
             // 只弹一个对话框，避免错误提示与 toast 同时出现互相遮挡

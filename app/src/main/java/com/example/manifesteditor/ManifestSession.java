@@ -65,11 +65,40 @@ public class ManifestSession {
     public boolean modified = false;
     /** 写回时使用的缩进单位（解析时从原文件自动检测，默认 4 空格） */
     public String indentUnit = "    ";
+    /** 原文文本（写回时以它为基准做"最小改动"补丁） */
+    public String originalText;
+    /** 原文结构索引（元素字符区间），用于最小改动写回 */
+    public ManifestSource source;
+    /**
+     * 原文件的属性换行风格：非 null 表示原文把属性拆到多行，
+     * 值为"属性续行缩进单位"（整篇重排时用来还原同样的排版）
+     */
+    public String attrIndentUnit;
 
     public ManifestSession(PluginUI ui, TextEditor editor, Document doc) {
+        this(ui, editor, doc, null);
+    }
+
+    public ManifestSession(PluginUI ui, TextEditor editor, Document doc, String originalText) {
         this.ui = ui;
         this.editor = editor;
         this.doc = doc;
+        setOriginalText(originalText);
+    }
+
+    /** 记录原文并重建索引（重新读取、写回后都要调用） */
+    public void setOriginalText(String text) {
+        this.originalText = text;
+        this.source = null;
+        this.attrIndentUnit = null;
+        if (text == null) return;
+        this.indentUnit = detectIndent(text);
+        this.attrIndentUnit = detectAttrIndentUnit(text);
+        try {
+            this.source = ManifestSource.scan(text);
+        } catch (Exception ignored) {
+            this.source = null;
+        }
     }
 
     // ==================== 解析与序列化 ====================
@@ -106,6 +135,47 @@ public class ManifestSession {
     }
 
     /**
+     * 检测原文件是否把属性拆成多行（MT、apktool 反编译出来的清单通常如此）。
+     * 返回"属性续行"相对元素所在行多出的缩进；原文属性全在一行时返回 null。
+     */
+    public static String detectAttrIndentUnit(String xml) {
+        int idx = 0;
+        int n = xml.length();
+        while (idx < n) {
+            int lt = xml.indexOf('<', idx);
+            if (lt < 0) break;
+            if (xml.startsWith("<!--", lt)) {
+                int e = xml.indexOf("-->", lt + 4);
+                idx = e < 0 ? n : e + 3;
+                continue;
+            }
+            if (xml.startsWith("<?", lt)) {
+                int e = xml.indexOf("?>", lt + 2);
+                idx = e < 0 ? n : e + 2;
+                continue;
+            }
+            int gt = xml.indexOf('>', lt);
+            if (gt < 0) break;
+            int nl = xml.indexOf('\n', lt);
+            if (nl >= 0 && nl < gt) {
+                int ls = xml.lastIndexOf('\n', lt - 1) + 1;
+                int i = ls;
+                while (i < lt && (xml.charAt(i) == ' ' || xml.charAt(i) == '\t')) i++;
+                String elIndent = xml.substring(ls, i);
+                int j = nl + 1;
+                while (j < n && (xml.charAt(j) == ' ' || xml.charAt(j) == '\t')) j++;
+                String cont = xml.substring(nl + 1, j);
+                if (cont.startsWith(elIndent) && cont.length() > elIndent.length()) {
+                    return cont.substring(elIndent.length());
+                }
+                if (!cont.isEmpty()) return cont;
+            }
+            idx = gt + 1;
+        }
+        return null;
+    }
+
+    /**
      * 序列化为带缩进的 XML 文本。
      * 不使用系统 Transformer（Android 上它会把已有的缩进空白压缩掉），
      * 而是手写格式化输出：声明独立一行、每个元素独立一行、按原文件缩进风格缩进、注释原样保留。
@@ -132,18 +202,23 @@ public class ManifestSession {
         String indent = indent(depth);
         sb.append(indent).append('<').append(el.getTagName());
         NamedNodeMap attrs = el.getAttributes();
+        // 原文件把属性拆成多行时，这里也拆行，否则整个标签挤成一行在窄屏上会被折得很难看
+        boolean multi = attrIndentUnit != null && attrs.getLength() > 1;
+        String cont = multi ? indent + attrIndentUnit : null;
         // xmlns 声明固定排在最前（符合 AndroidManifest 惯例），其余属性按解析器顺序
-        for (int i = 0; i < attrs.getLength(); i++) {
-            Node a = attrs.item(i);
-            if (!a.getNodeName().startsWith("xmlns")) continue;
-            sb.append(' ').append(a.getNodeName()).append("=\"")
-                    .append(escapeAttr(a.getNodeValue())).append('"');
-        }
-        for (int i = 0; i < attrs.getLength(); i++) {
-            Node a = attrs.item(i);
-            if (a.getNodeName().startsWith("xmlns")) continue;
-            sb.append(' ').append(a.getNodeName()).append("=\"")
-                    .append(escapeAttr(a.getNodeValue())).append('"');
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < attrs.getLength(); i++) {
+                Node a = attrs.item(i);
+                boolean isNs = a.getNodeName().startsWith("xmlns");
+                if (pass == 0 ? !isNs : isNs) continue;
+                if (multi) {
+                    sb.append('\n').append(cont);
+                } else {
+                    sb.append(' ');
+                }
+                sb.append(a.getNodeName()).append("=\"")
+                        .append(escapeAttr(a.getNodeValue())).append('"');
+            }
         }
 
         // 分析子节点：是否包含块级子节点（元素/注释/PI）以及内联文本
@@ -222,12 +297,18 @@ public class ManifestSession {
                 .replace("\"", "&quot;").replace(">", "&gt;");
     }
 
-    /** 将当前 DOM 写回文本编辑器（整体替换，支持撤销） */
+    /**
+     * 写回文本编辑器。
+     *
+     * <p>优先走"最小改动"：只把真正变动的那几行替换掉，用户原有的排版、
+     * 注释、空行一律不动；只有补丁不可用（结构对不上、补丁结果与内存 DOM 不一致）
+     * 时才退回整篇重新序列化。
+     */
     public void writeBack() throws Exception {
         if (editor.isReadOnly()) {
             throw new IllegalStateException("当前编辑器处于只读模式，无法写回");
         }
-        String xml = toXml();
+        String xml = buildWriteBackText();
         editor.startLargeBatchEditingMode();
         try {
             editor.replaceText(0, editor.length(), xml);
@@ -238,6 +319,51 @@ public class ManifestSession {
         editor.pushSelectionToUndoBuffer();
         editor.ensurePositionVisible(0, true);
         modified = false;
+        // 写回后原文基准要跟着更新，否则下一次写回会基于过期文本打补丁
+        setOriginalText(xml);
+    }
+
+    /** 上一次写回是否退化为整篇重排（用于给用户提示） */
+    public boolean lastWriteBackWasFullRewrite = false;
+
+    /** 计算写回文本：先尝试最小改动补丁，失败则整篇重排 */
+    public String buildWriteBackText() throws Exception {
+        if (source != null && originalText != null && editorTextUnchanged()) {
+            try {
+                String patched = ManifestPatcher.patch(doc, source);
+                if (patched != null) {
+                    // 校验：补丁结果必须能正常解析，且与内存中的 DOM 完全等价
+                    Document check = parse(patched);
+                    if (ManifestPatcher.sameTree(check.getDocumentElement(),
+                            doc.getDocumentElement())) {
+                        lastWriteBackWasFullRewrite = false;
+                        return patched;
+                    }
+                }
+            } catch (Exception ignored) {
+                // 落到整篇重排
+            }
+        }
+        lastWriteBackWasFullRewrite = true;
+        return toXml();
+    }
+
+    /** 编辑器内容是否仍与解析时一致（被外部改动过就不能按旧索引打补丁） */
+    private boolean editorTextUnchanged() {
+        try {
+            String cur = editor.subText(0, editor.length());
+            return normalizeText(cur).equals(normalizeText(originalText));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String normalizeText(String s) {
+        if (s == null) return "";
+        s = s.replace("\r\n", "\n").replace('\r', '\n');
+        int end = s.length();
+        while (end > 0 && Character.isWhitespace(s.charAt(end - 1))) end--;
+        return s.substring(0, end);
     }
 
     // ==================== manifest 根属性 ====================

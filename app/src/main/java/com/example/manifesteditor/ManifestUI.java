@@ -100,7 +100,11 @@ public class ManifestUI {
                 return;
             }
             session.writeBack();
-            ui.showToastL("已写回编辑器，点击顶部保存按钮即可保存文件");
+            if (session.lastWriteBackWasFullRewrite) {
+                ui.showToastL("已写回（检测到结构变化较大，本次为整篇重排），点击顶部保存按钮即可保存");
+            } else {
+                ui.showToastL("已写回编辑器（只改动了变动的行，原排版保留），点击顶部保存按钮即可保存");
+            }
             if (mainDialog != null) mainDialog.dismiss();
         } catch (Exception e) {
             ui.showErrorMessage(e);
@@ -125,7 +129,7 @@ public class ManifestUI {
         try {
             String text = session.editor.subText(0, session.editor.length());
             session.doc = ManifestSession.parse(text);
-            session.indentUnit = ManifestSession.detectIndent(text);
+            session.setOriginalText(text);
             session.modified = false;
             if (mainDialog != null) mainDialog.dismiss();
             showMainDialog();
