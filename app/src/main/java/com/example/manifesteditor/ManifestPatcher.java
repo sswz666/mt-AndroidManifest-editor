@@ -33,11 +33,14 @@ final class ManifestPatcher {
         final int start;
         final int end;
         final String text;
+        /** 生成序号：同一位置的多处插入要靠它保持先后顺序 */
+        final int seq;
 
-        Edit(int start, int end, String text) {
+        Edit(int start, int end, String text, int seq) {
             this.start = start;
             this.end = end;
             this.text = text;
+            this.seq = seq;
         }
     }
 
@@ -45,6 +48,7 @@ final class ManifestPatcher {
     private final ManifestSource src;
     private final String text;
     private final List<Edit> edits = new ArrayList<>();
+    private int nextSeq = 0;
 
     private ManifestPatcher(Document doc, ManifestSource src) {
         this.doc = doc;
@@ -58,6 +62,10 @@ final class ManifestPatcher {
         return new ManifestPatcher(doc, src).run();
     }
 
+    private void add(int start, int end, String text) {
+        edits.add(new Edit(start, end, text, nextSeq++));
+    }
+
     private String run() {
         Element domRoot = doc.getDocumentElement();
         if (domRoot == null || !domRoot.getTagName().equals(src.root.tag)) return null;
@@ -65,7 +73,15 @@ final class ManifestPatcher {
         if (edits.isEmpty()) return text;
 
         List<Edit> sorted = new ArrayList<>(edits);
-        sorted.sort((a, b) -> Integer.compare(b.start, a.start));
+        // 从后往前应用。同一起点上：先删除、后插入（删除不改变起点，插入才改变），
+        // 同类插入之间按生成顺序倒着应用，最终顺序才与生成顺序一致。
+        sorted.sort((a, b) -> {
+            if (a.start != b.start) return Integer.compare(b.start, a.start);
+            boolean aInsert = a.end == a.start;
+            boolean bInsert = b.end == b.start;
+            if (aInsert != bInsert) return aInsert ? 1 : -1;
+            return Integer.compare(b.seq, a.seq);
+        });
         StringBuilder sb = new StringBuilder(text);
         int limit = Integer.MAX_VALUE;
         for (Edit e : sorted) {
@@ -82,7 +98,7 @@ final class ManifestPatcher {
             String tagText = text.substring(srcNode.start, srcNode.startTagEnd);
             String patched = buildTag(tagText, domEl);
             if (patched == null) return false;
-            edits.add(new Edit(srcNode.start, srcNode.startTagEnd, patched));
+            add(srcNode.start, srcNode.startTagEnd, patched);
         }
 
         List<Element> domKids = elementChildren(domEl);
@@ -141,9 +157,9 @@ final class ManifestPatcher {
         boolean blankBefore = isBlank(lineFrom, s.start);
         boolean blankAfter = isBlank(s.end, Math.max(s.end, lineTo - 1));
         if (blankBefore && blankAfter && lineTo > lineFrom) {
-            edits.add(new Edit(lineFrom, lineTo, ""));
+            add(lineFrom, lineTo, "");
         } else {
-            edits.add(new Edit(s.start, s.end, ""));
+            add(s.start, s.end, "");
         }
     }
 
@@ -200,7 +216,7 @@ final class ManifestPatcher {
             }
         }
         if (pos < 0 || pos > text.length()) return false;
-        edits.add(new Edit(pos, pos, indent + tagText + "\n"));
+        add(pos, pos, indent + tagText + "\n");
         return true;
     }
 

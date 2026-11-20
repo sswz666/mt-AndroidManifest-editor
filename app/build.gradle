@@ -47,8 +47,8 @@ dependencies {
 mtPlugin {
     // 插件唯一标识
     pluginID = "com.example.manifesteditor"
-    versionCode = 4
-    versionName = "v1.3"
+    versionCode = 5
+    versionName = "v1.4"
     // 插件名称与描述
     name = "Manifest 可视化编辑器"
     description = "在文本编辑器中查看 AndroidManifest.xml 时，通过「编辑」菜单打开可视化面板：查看应用信息、SDK 版本、组件列表，集中管理权限（中文说明、一键删除、快捷添加常用权限、定位到原文），修改后一键写回编辑器。"

@@ -309,15 +309,24 @@ public class ManifestSession {
             throw new IllegalStateException("当前编辑器处于只读模式，无法写回");
         }
         String xml = buildWriteBackText();
+        if (xml.equals(originalText)) {
+            // 与原文完全一致（例如改了又改回去）：不动编辑器，避免白清一次撤销栈
+            modified = false;
+            lastWriteBackWasFullRewrite = false;
+            return;
+        }
+        int caret = editor.getSelectionStart();
         editor.startLargeBatchEditingMode();
         try {
             editor.replaceText(0, editor.length(), xml);
         } finally {
             editor.finishLargeBatchEditingMode();
         }
-        editor.setSelection(0);
+        // 光标尽量留在原来的位置，而不是每次都跳回文件开头
+        int pos = Math.max(0, Math.min(caret, xml.length()));
+        editor.setSelection(pos);
         editor.pushSelectionToUndoBuffer();
-        editor.ensurePositionVisible(0, true);
+        editor.ensurePositionVisible(pos, true);
         modified = false;
         // 写回后原文基准要跟着更新，否则下一次写回会基于过期文本打补丁
         setOriginalText(xml);
@@ -373,8 +382,7 @@ public class ManifestSession {
     }
 
     public void setPackage(String value) {
-        doc.getDocumentElement().setAttribute("package", value);
-        modified = true;
+        setAttr(doc.getDocumentElement(), "package", value);
     }
 
     public String getManifestAttr(String attr) {
@@ -382,7 +390,24 @@ public class ManifestSession {
     }
 
     public void setManifestAttr(String attr, String value) {
-        doc.getDocumentElement().setAttribute("android:" + attr, value);
+        setAttr(doc.getDocumentElement(), "android:" + attr, value);
+    }
+
+    /**
+     * 统一的属性写入：值确实变化才改并标记 modified，
+     * 传入空值表示删除该属性。避免"点了应用但什么都没改"也把文件标成已修改。
+     */
+    private void setAttr(Element el, String name, String value) {
+        String now = value == null ? "" : value;
+        if (now.isEmpty()) {
+            if (el.hasAttribute(name)) {
+                el.removeAttribute(name);
+                modified = true;
+            }
+            return;
+        }
+        if (now.equals(el.getAttribute(name))) return;
+        el.setAttribute(name, now);
         modified = true;
     }
 
@@ -411,17 +436,21 @@ public class ManifestSession {
     }
 
     public void setSdkAttr(String attr, String value) {
-        if (value.isEmpty()) {
-            // 值为空：仅在 uses-sdk 已存在时移除该属性，避免生成空的 <uses-sdk />
-            Element usesSdk = firstChild(doc.getDocumentElement(), "uses-sdk");
-            if (usesSdk != null && usesSdk.hasAttribute("android:" + attr)) {
-                usesSdk.removeAttribute("android:" + attr);
-                modified = true;
-            }
-        } else {
-            getOrCreateUsesSdk().setAttribute("android:" + attr, value);
+        Element root = doc.getDocumentElement();
+        Element usesSdk = firstChild(root, "uses-sdk");
+        if (value == null || value.isEmpty()) {
+            // 值为空：仅移除已有属性，绝不因此凭空创建 <uses-sdk />
+            if (usesSdk == null || !usesSdk.hasAttribute("android:" + attr)) return;
+            usesSdk.removeAttribute("android:" + attr);
             modified = true;
+            // 属性被清空的 <uses-sdk /> 没有意义，一并去掉
+            if (usesSdk.getAttributes().getLength() == 0) {
+                root.removeChild(usesSdk);
+            }
+            return;
         }
+        if (usesSdk == null) usesSdk = getOrCreateUsesSdk();
+        setAttr(usesSdk, "android:" + attr, value);
     }
 
     // ==================== application 属性 ====================
@@ -444,16 +473,13 @@ public class ManifestSession {
     }
 
     public void setAppAttr(String attr, String value) {
-        Element app = getOrCreateApplication();
-        if (value.isEmpty()) {
-            if (app.hasAttribute("android:" + attr)) {
-                app.removeAttribute("android:" + attr);
-                modified = true;
-            }
-        } else {
-            app.setAttribute("android:" + attr, value);
-            modified = true;
+        Element app = firstChild(doc.getDocumentElement(), "application");
+        if (app == null) {
+            // 要删除的属性在不存在时无需处理，避免凭空造出一个空的 <application />
+            if (value == null || value.isEmpty()) return;
+            app = getOrCreateApplication();
         }
+        setAttr(app, "android:" + attr, value);
     }
 
     // ==================== 权限管理 ====================

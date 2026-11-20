@@ -75,7 +75,7 @@ public class ManifestUI {
                 .addHorizontalLayout().marginTopDp(8).children(row -> row
                         .addButton("writeBack").text("写回编辑器").width(0).layoutWeight(1)
                         .addButton("reload").text("重新读取").width(0).layoutWeight(1))
-                .addButton("save").text("保存文件").widthMatchParent().marginTopDp(8)
+                .addButton("save").text("写回并保存").widthMatchParent().marginTopDp(8)
                 .build();
 
         view.requireViewById("perms").setOnClickListener(v -> showPermissionDialog());
@@ -89,7 +89,11 @@ public class ManifestUI {
         mainDialog = ui.buildDialog()
                 .setTitle("Manifest 可视化编辑器")
                 .setView(view)
-                .setPositiveButton("{close}", null)
+                .setPositiveButton("{close}", (dialog, which) -> {
+                    if (session.modified) {
+                        ui.showToastL("注意：还有修改没有写回编辑器，已丢弃");
+                    }
+                })
                 .show();
     }
 
@@ -106,12 +110,24 @@ public class ManifestUI {
                 ui.showToastL("已写回编辑器（只改动了变动的行，原排版保留），点击顶部保存按钮即可保存");
             }
             if (mainDialog != null) mainDialog.dismiss();
+        } catch (IllegalStateException e) {
+            ui.showToastL(e.getMessage() == null ? "当前状态无法写回" : e.getMessage());
         } catch (Exception e) {
             ui.showErrorMessage(e);
         }
     }
 
     private void doSave() {
+        try {
+            // 有未写回的修改时先写回，否则"保存"保存的是没有改动的内容
+            if (session.modified) session.writeBack();
+        } catch (IllegalStateException e) {
+            ui.showToastL(e.getMessage() == null ? "当前状态无法写回" : e.getMessage());
+            return;
+        } catch (Exception e) {
+            ui.showErrorMessage(e);
+            return;
+        }
         session.editor.save(new ResultCallback() {
             @Override
             public void onSuccess() {
@@ -126,6 +142,20 @@ public class ManifestUI {
     }
 
     private void reload() {
+        if (session.modified) {
+            // 重新读取会丢弃内存中的修改，先确认一下
+            ui.buildDialog()
+                    .setTitle("放弃未写回的修改？")
+                    .setMessage("还有修改没有写回编辑器，重新读取会丢弃这些修改。")
+                    .setPositiveButton("放弃并重新读取", (dialog, which) -> doReload())
+                    .setNegativeButton("{cancel}", null)
+                    .show();
+            return;
+        }
+        doReload();
+    }
+
+    private void doReload() {
         try {
             String text = session.editor.subText(0, session.editor.length());
             session.doc = ManifestSession.parse(text);
@@ -277,6 +307,10 @@ public class ManifestUI {
                 ui.showToast("请输入权限名");
                 return;
             }
+            if (name.matches(".*\\s.*")) {
+                ui.showToast("权限名不能包含空格");
+                return;
+            }
             if (!name.contains(".")) {
                 name = "android.permission." + name;
             }
@@ -342,7 +376,11 @@ public class ManifestUI {
                             }
                         }
                     }
-                    ui.showToastL("已添加 " + added + " 项，移除 " + removed + " 项，点击主面板「写回编辑器」生效");
+                    if (added == 0 && removed == 0) {
+                        ui.showToastL("没有变化，未做任何修改");
+                    } else {
+                        ui.showToastL("已添加 " + added + " 项，移除 " + removed + " 项，点击主面板「写回编辑器」生效");
+                    }
                 })
                 .setNegativeButton("{cancel}", null)
                 .show();
@@ -373,7 +411,7 @@ public class ManifestUI {
         addAttrSwitch(b, "requestLegacyExternalStorage", "使用传统外部存储（Android 10/11 兼容）", false);
 
         b.addButton("apply").text("应用基础属性").widthMatchParent().marginTopDp(12);
-        b.addTextView().text("提示：开关切换会立即写入内存中的清单，点击主面板「写回编辑器」生效。")
+        b.addTextView().text("提示：开关切换会立即写入内存；输入框清空后点「应用基础属性」表示删除该属性。最后回主面板点「写回编辑器」生效。")
                 .textSize(12).textColor(ui.colorTextSecondary()).marginTopDp(8);
 
         PluginView view = b.build();
@@ -383,10 +421,11 @@ public class ManifestUI {
             String label = root.<PluginEditText>requireViewById("label").getText().toString().trim();
             String icon = root.<PluginEditText>requireViewById("icon").getText().toString().trim();
             String theme = root.<PluginEditText>requireViewById("theme").getText().toString().trim();
-            if (!label.isEmpty()) session.setAppAttr("label", label);
-            if (!icon.isEmpty()) session.setAppAttr("icon", icon);
-            if (!theme.isEmpty()) session.setAppAttr("theme", theme);
-            ui.showToastL("基础属性已应用，点击主面板「写回编辑器」生效");
+            // 清空输入框 = 删除该属性
+            session.setAppAttr("label", label);
+            session.setAppAttr("icon", icon);
+            session.setAppAttr("theme", theme);
+            ui.showToastL("基础属性已应用，回到主面板点「写回编辑器」或「写回并保存」生效");
         });
 
         // 统一标签宽度
@@ -453,6 +492,10 @@ public class ManifestUI {
             String vname = root.<PluginEditText>requireViewById("vname").getText().toString().trim();
             String minsdk = root.<PluginEditText>requireViewById("minsdk").getText().toString().trim();
             String targetsdk = root.<PluginEditText>requireViewById("targetsdk").getText().toString().trim();
+            if (!vcode.isEmpty() && !vcode.matches("\\d+")) {
+                ui.showToast("版本号 versionCode 必须是数字");
+                return;
+            }
             if (!pkg.isEmpty()) session.setPackage(pkg);
             if (!vcode.isEmpty()) session.setManifestAttr("versionCode", vcode);
             if (!vname.isEmpty()) session.setManifestAttr("versionName", vname);
@@ -539,11 +582,20 @@ public class ManifestUI {
 
     /** 定位到编辑器原文，并关闭主面板让用户直接看到定位结果 */
     private void locateAndClose(String primaryNeedle, String fallbackNeedle) {
-        if (mainDialog != null) mainDialog.dismiss();
         boolean ok = session.locateInEditor(primaryNeedle);
         if (!ok) {
             ok = session.locateInEditor(fallbackNeedle);
         }
-        ui.showToast(ok ? "已在原文中定位" : "未能在编辑器原文中找到该内容");
+        // 定位失败时保留面板，方便用户换个操作，而不是把面板关掉
+        if (ok) {
+            if (mainDialog != null) mainDialog.dismiss();
+            if (session.modified) {
+                ui.showToastL("已定位到原文；注意还有修改没有写回，已丢弃");
+            } else {
+                ui.showToast("已在原文中定位");
+            }
+        } else {
+            ui.showToast("未能在编辑器原文中找到该内容");
+        }
     }
 }
